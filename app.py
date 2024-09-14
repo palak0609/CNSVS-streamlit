@@ -21,68 +21,79 @@ def main():
                 extracted_tables = page.extract_tables()
                 tables.extend(extracted_tables)
 
-        if len(tables) < 2:
-            st.error("The uploaded PDF does not contain enough tables.")
+        # Initialize table-related data variables
+        df1 = None
+        df2 = None
+
+        # Check if any tables exist
+        if tables:
+            # Extract and process the upper table (second table in the PDF) if present
+            if len(tables) > 1:
+                table_data_1 = tables[1]
+                cleaned_columns_1 = []
+                for i, column_name in enumerate(table_data_1[0]):
+                    if column_name is None:
+                        cleaned_columns_1.append(f"Unnamed_{i}")
+                    elif table_data_1[0].count(column_name) > 1:
+                        cleaned_columns_1.append(f"{column_name}_{i}")
+                    else:
+                        cleaned_columns_1.append(column_name)
+
+                df1 = pd.DataFrame(table_data_1[1:], columns=cleaned_columns_1)
+                st.write("Extracted Upper Table:")
+                st.dataframe(df1)
+
+                # Process the upper table
+                selected_columns_1 = df1.iloc[:, [0, 3]]
+                selected_columns_1.columns = ["Domain Scores", "Percentile"]
+                selected_columns_1['Percentile'] = selected_columns_1['Percentile'].apply(clean_percentile)
+                selected_columns_1.dropna(subset=['Percentile'], inplace=True)
+                selected_columns_1['Grade'] = selected_columns_1['Percentile'].apply(grading_system)
+
+                st.write("Processed Data with Grades for Upper Table:")
+                st.dataframe(selected_columns_1)
+
+            # Extract and process the lower table containing Domain, Score, and Severity if present
+            lower_table_data = None
+            for i, table in enumerate(tables):
+                # Check each table for the lower table structure based on known headers
+                if len(table) > 0 and len(table[0]) >= 3 and table[0][0] == "Domain" and table[0][1] == "Score" and table[0][2] == "Severity":
+                    lower_table_data = table
+                    break
+
+            if lower_table_data:
+                # Handle rows with extra columns
+                cleaned_lower_table_data = [row[:3] for row in lower_table_data[1:] if len(row) >= 3]
+                df2 = pd.DataFrame(cleaned_lower_table_data, columns=["Domain", "Score", "Severity"])
+
+                st.write("Extracted Lower Table (Domain, Score, Severity):")
+                st.dataframe(df2)
+
+                # Clean and process the lower table
+                df2['Score'] = df2['Score'].apply(clean_score)
+                df2.dropna(subset=['Score'], inplace=True)
+                df2['Grade'] = df2['Severity'].apply(grading_system_2)
+
+                st.write("Processed Data with Grades for Lower Table:")
+                st.dataframe(df2)
+
+        else:
+            st.error("The uploaded PDF does not contain any tables.")
             return
 
-        # Extract and process the upper table (second table in the PDF)
-        table_data_1 = tables[1]
-        cleaned_columns_1 = []
-        for i, column_name in enumerate(table_data_1[0]):
-            if column_name is None:
-                cleaned_columns_1.append(f"Unnamed_{i}")
-            elif table_data_1[0].count(column_name) > 1:
-                cleaned_columns_1.append(f"{column_name}_{i}")
-            else:
-                cleaned_columns_1.append(column_name)
+        # Combine both dataframes if available or process separately
+        if df1 is not None and df2 is not None:
+            combined_df = pd.concat([selected_columns_1, df2], axis=0, ignore_index=True)
+        elif df1 is not None:
+            combined_df = selected_columns_1
+        elif df2 is not None:
+            combined_df = df2
+        else:
+            combined_df = pd.DataFrame()
+            st.error("No table data was extracted.")
 
-        df1 = pd.DataFrame(table_data_1[1:], columns=cleaned_columns_1)
-        st.write("Extracted Upper Table:")
-        st.dataframe(df1)
-
-        # Process the upper table
-        selected_columns_1 = df1.iloc[:, [0, 3]]
-        selected_columns_1.columns = ["Domain Scores", "Percentile"]
-        selected_columns_1['Percentile'] = selected_columns_1['Percentile'].apply(clean_percentile)
-        selected_columns_1.dropna(subset=['Percentile'], inplace=True)
-        selected_columns_1['Grade'] = selected_columns_1['Percentile'].apply(grading_system)
-
-        st.write("Processed Data with Grades for Upper Table:")
-        st.dataframe(selected_columns_1)
-
-        # Extract and process the lower table containing Domain, Score, and Severity
-        lower_table_data = None
-        for i, table in enumerate(tables):
-            # Check each table for the lower table structure based on known headers
-            if len(table) > 0 and len(table[0]) >= 3 and table[0][0] == "Domain" and table[0][1] == "Score" and table[0][2] == "Severity":
-                lower_table_data = table
-                break
-
-        if lower_table_data is None:
-            st.error("The lower table with Domain, Score, and Severity was not found in the PDF.")
-            return
-
-        # Handle rows with extra columns
-        cleaned_lower_table_data = [row[:3] for row in lower_table_data[1:] if len(row) >= 3]
-        df2 = pd.DataFrame(cleaned_lower_table_data, columns=["Domain", "Score", "Severity"])
-
-        st.write("Extracted Lower Table (Domain, Score, Severity):")
-        st.dataframe(df2)
-
-        # Clean and process the lower table
-        df2['Score'] = df2['Score'].apply(clean_score)
-        df2.dropna(subset=['Score'], inplace=True)
-        df2['Grade'] = df2['Severity'].apply(grading_system_2)
-
-        st.write("Processed Data with Grades for Lower Table:")
-        st.dataframe(df2)
-
-        # Combine both dataframes if needed or process separately
-        combined_df = pd.concat([selected_columns_1, df2], axis=0, ignore_index=True)
-
-        # Extract PHQ-9 and PCL-5 data
+        # Extract PHQ-9 and PCL-5 data if available
         phq9_data, pcl5_data = extract_phq9_and_pcl5(uploaded_file)
-        
 
         # Display PHQ-9 Score with Interpretation
         if phq9_data:
@@ -91,7 +102,7 @@ def main():
             st.markdown("**Patient Health Questionnaire (PHQ-9)**")
             st.write(f"• PHQ-9 Score: {phq9_score} ({interpretation})")
 
-        # Display PCL-5 Scores
+        # Display PCL-5 Scores if available
         if pcl5_data:
             st.markdown("**PTSD Checklist (PCL-5) SF-20**")
             st.write(f"• Intrusion (Items 1 - 5): {pcl5_data['Intrusion']}")
@@ -101,13 +112,16 @@ def main():
             st.write(f"• Total Score (Items 1 - 20): {pcl5_data['Total Score']}")
 
         # Convert to DOCX and prepare for download
-        docx_data = csv_to_docx_with_flagging(combined_df, phq9_data, pcl5_data)
-        st.download_button(
-            label="Download DOCX",
-            data=docx_data,
-            file_name="extracted_data.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        if not combined_df.empty or phq9_data or pcl5_data:
+            docx_data = csv_to_docx_with_flagging(combined_df, phq9_data, pcl5_data)
+            st.download_button(
+                label="Download DOCX",
+                data=docx_data,
+                file_name="extracted_data.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        else:
+            st.error("No data to convert to DOCX.")
 
 def clean_percentile(value):
     match = re.search(r'\d+', str(value))
@@ -144,8 +158,6 @@ def csv_to_docx_with_flagging(df, phq9_data, pcl5_data):
     title_run.font.size = Pt(16)
     title_run.bold = True  # Make the text bold
     title_run.font.color.rgb = RGBColor(0, 0, 0)  # Set font color to black
-
-    
 
     # Flag to track when to insert the new heading
     npq_heading_added = False
